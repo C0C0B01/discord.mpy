@@ -79,7 +79,6 @@ from .sticker import GuildSticker
 from .automod import AutoModRule, AutoModAction
 from .audit_logs import AuditLogEntry
 from ._types import ClientT
-from .soundboard import SoundboardSound
 from .subscription import Subscription
 
 
@@ -88,7 +87,6 @@ if TYPE_CHECKING:
     from .message import MessageableChannel
     from .guild import GuildChannel
     from .http import HTTPClient
-    from .voice_client import VoiceProtocol
     from .gateway import DiscordWebSocket
     from .ui.item import Item
     from .ui.dynamic import DynamicItem
@@ -282,13 +280,6 @@ class ConnectionState(Generic[ClientT]):
         return self._intents.emojis_and_stickers
 
     async def close(self) -> None:
-        for voice in self.voice_clients:
-            try:
-                await voice.disconnect(force=True)
-            except Exception:
-                # if an error happens during disconnects, disregard it.
-                pass
-
         if self._translator:
             await self._translator.unload()
 
@@ -302,8 +293,6 @@ class ConnectionState(Generic[ClientT]):
         self._guilds: Dict[int, Guild] = {}
         if views:
             self._view_store: ViewStore = ViewStore(self)
-
-        self._voice_clients: Dict[int, VoiceProtocol] = {}
 
         # LRU of max size 128
         self._private_channels: OrderedDict[int, PrivateChannel] = OrderedDict()
@@ -362,24 +351,6 @@ class ConnectionState(Generic[ClientT]):
         ret = Intents.none()
         ret.value = self._intents.value
         return ret
-
-    @property
-    def voice_clients(self) -> List[VoiceProtocol]:
-        return list(self._voice_clients.values())
-
-    def _get_voice_client(self, guild_id: Optional[int]) -> Optional[VoiceProtocol]:
-        # the keys of self._voice_clients are ints
-        return self._voice_clients.get(guild_id)  # type: ignore
-
-    def _add_voice_client(self, guild_id: int, voice: VoiceProtocol) -> None:
-        self._voice_clients[guild_id] = voice
-
-    def _remove_voice_client(self, guild_id: int) -> None:
-        self._voice_clients.pop(guild_id, None)
-
-    def _update_references(self, ws: DiscordWebSocket) -> None:
-        for vc in self.voice_clients:
-            vc.main_ws = ws  # type: ignore # Silencing the unknown attribute (ok at runtime).
 
     def store_user(self, data: Union[UserPayload, PartialUserPayload], *, cache: bool = True) -> User:
         # this way is 300% faster than `dict.setdefault`.
@@ -462,14 +433,6 @@ class ConnectionState(Generic[ClientT]):
     @property
     def stickers(self) -> Sequence[GuildSticker]:
         return utils.SequenceProxy(self._stickers.values())
-
-    @property
-    def soundboard_sounds(self) -> List[SoundboardSound]:
-        all_sounds = []
-        for guild in self.guilds:
-            all_sounds.extend(guild.soundboard_sounds)
-
-        return all_sounds
 
     def get_emoji(self, emoji_id: Optional[int]) -> Optional[Emoji]:
         # the keys of self._emojis are ints
@@ -1596,108 +1559,9 @@ class ConnectionState(Generic[ClientT]):
         else:
             _log.debug('SCHEDULED_EVENT_USER_REMOVE referencing unknown guild ID: %s. Discarding.', data['guild_id'])
 
-    def parse_guild_soundboard_sound_create(self, data: gw.GuildSoundBoardSoundCreateEvent) -> None:
-        guild_id = int(data['guild_id'])  # type: ignore # can't be None here
-        guild = self._get_guild(guild_id)
-        if guild is not None:
-            sound = SoundboardSound(guild=guild, state=self, data=data)
-            guild._add_soundboard_sound(sound)
-            self.dispatch('soundboard_sound_create', sound)
-        else:
-            _log.debug('GUILD_SOUNDBOARD_SOUND_CREATE referencing unknown guild ID: %s. Discarding.', guild_id)
-
-    def _update_and_dispatch_sound_update(self, sound: SoundboardSound, data: gw.GuildSoundBoardSoundUpdateEvent):
-        old_sound = copy.copy(sound)
-        sound._update(data)
-        self.dispatch('soundboard_sound_update', old_sound, sound)
-
-    def parse_guild_soundboard_sound_update(self, data: gw.GuildSoundBoardSoundUpdateEvent) -> None:
-        guild_id = int(data['guild_id'])  # type: ignore # can't be None here
-        guild = self._get_guild(guild_id)
-        if guild is not None:
-            sound_id = int(data['sound_id'])
-            sound = guild.get_soundboard_sound(sound_id)
-            if sound is not None:
-                self._update_and_dispatch_sound_update(sound, data)
-            else:
-                _log.warning('GUILD_SOUNDBOARD_SOUND_UPDATE referencing unknown sound ID: %s. Discarding.', sound_id)
-        else:
-            _log.debug('GUILD_SOUNDBOARD_SOUND_UPDATE referencing unknown guild ID: %s. Discarding.', guild_id)
-
-    def parse_guild_soundboard_sound_delete(self, data: gw.GuildSoundBoardSoundDeleteEvent) -> None:
-        guild_id = int(data['guild_id'])
-        guild = self._get_guild(guild_id)
-        if guild is not None:
-            sound_id = int(data['sound_id'])
-            sound = guild.get_soundboard_sound(sound_id)
-            if sound is not None:
-                guild._remove_soundboard_sound(sound)
-                self.dispatch('soundboard_sound_delete', sound)
-            else:
-                _log.warning('GUILD_SOUNDBOARD_SOUND_DELETE referencing unknown sound ID: %s. Discarding.', sound_id)
-        else:
-            _log.debug('GUILD_SOUNDBOARD_SOUND_DELETE referencing unknown guild ID: %s. Discarding.', guild_id)
-
-    def parse_guild_soundboard_sounds_update(self, data: gw.GuildSoundBoardSoundsUpdateEvent) -> None:
-        guild_id = int(data['guild_id'])
-        guild = self._get_guild(guild_id)
-        if guild is None:
-            _log.debug('GUILD_SOUNDBOARD_SOUNDS_UPDATE referencing unknown guild ID: %s. Discarding.', guild_id)
-            return
-
-        for raw_sound in data['soundboard_sounds']:
-            sound_id = int(raw_sound['sound_id'])
-            sound = guild.get_soundboard_sound(sound_id)
-            if sound is not None:
-                self._update_and_dispatch_sound_update(sound, raw_sound)
-            else:
-                _log.warning('GUILD_SOUNDBOARD_SOUNDS_UPDATE referencing unknown sound ID: %s. Discarding.', sound_id)
-
     def parse_application_command_permissions_update(self, data: GuildApplicationCommandPermissionsPayload):
         raw = RawAppCommandPermissionsUpdateEvent(data=data, state=self)
         self.dispatch('raw_app_command_permissions_update', raw)
-
-    def parse_voice_state_update(self, data: gw.VoiceStateUpdateEvent) -> None:
-        guild = self._get_guild(utils._get_as_snowflake(data, 'guild_id'))
-        channel_id = utils._get_as_snowflake(data, 'channel_id')
-        flags = self.member_cache_flags
-        # self.user is *always* cached when this is called
-        self_id = self.user.id  # type: ignore
-        if guild is not None:
-            if int(data['user_id']) == self_id:
-                voice = self._get_voice_client(guild.id)
-                if voice is not None:
-                    coro = voice.on_voice_state_update(data)
-                    asyncio.create_task(logging_coroutine(coro, info='Voice Protocol voice state update handler'))
-
-            member, before, after = guild._update_voice_state(data, channel_id)  # type: ignore
-            if member is not None:
-                if flags.voice:
-                    if channel_id is None and flags._voice_only and member.id != self_id:
-                        # Only remove from cache if we only have the voice flag enabled
-                        guild._remove_member(member)
-                    elif channel_id is not None:
-                        guild._add_member(member)
-
-                self.dispatch('voice_state_update', member, before, after)
-            else:
-                _log.debug('VOICE_STATE_UPDATE referencing an unknown member ID: %s. Discarding.', data['user_id'])
-
-    def parse_voice_channel_effect_send(self, data: gw.VoiceChannelEffectSendEvent):
-        guild = self._get_guild(int(data['guild_id']))
-        if guild is not None:
-            effect = VoiceChannelEffect(state=self, data=data, guild=guild)
-            self.dispatch('voice_channel_effect', effect)
-        else:
-            _log.debug('VOICE_CHANNEL_EFFECT_SEND referencing an unknown guild ID: %s. Discarding.', data['guild_id'])
-
-    def parse_voice_server_update(self, data: gw.VoiceServerUpdateEvent) -> None:
-        key_id = int(data['guild_id'])
-
-        vc = self._get_voice_client(key_id)
-        if vc is not None:
-            coro = vc.on_voice_server_update(data)
-            asyncio.create_task(logging_coroutine(coro, info='Voice Protocol voice server update handler'))
 
     def parse_typing_start(self, data: gw.TypingStartEvent) -> None:
         raw = RawTypingEvent(data)
@@ -1824,16 +1688,6 @@ class ConnectionState(Generic[ClientT]):
 
     def create_message(self, *, channel: MessageableChannel, data: MessagePayload) -> Message:
         return Message(state=self, channel=channel, data=data)
-
-    def get_soundboard_sound(self, id: Optional[int]) -> Optional[SoundboardSound]:
-        if id is None:
-            return
-
-        for guild in self.guilds:
-            sound = guild._resolve_soundboard_sound(id)
-            if sound is not None:
-                return sound
-
 
 class AutoShardedConnectionState(ConnectionState[ClientT]):
     def __init__(self, *args: Any, **kwargs: Any) -> None:

@@ -28,20 +28,18 @@ import asyncio
 from collections import deque
 import concurrent.futures
 import logging
-import struct
 import sys
 import time
 import threading
 import traceback
 
-from typing import Any, Callable, Coroutine, Deque, Dict, List, TYPE_CHECKING, NamedTuple, Optional, TypeVar, Tuple
+from typing import Any, Callable, Coroutine, Deque, Dict, List, TYPE_CHECKING, NamedTuple, Optional, TypeVar
 
 import aiohttp
 import yarl
 
 from . import utils
 from .activity import BaseActivity
-from .enums import SpeakingState
 from .errors import ConnectionClosed
 
 _log = logging.getLogger(__name__)
@@ -49,8 +47,6 @@ _log = logging.getLogger(__name__)
 __all__ = (
     'DiscordWebSocket',
     'KeepAliveHandler',
-    'VoiceKeepAliveHandler',
-    'DiscordVoiceWebSocket',
     'ReconnectWebSocket',
 )
 
@@ -59,7 +55,6 @@ if TYPE_CHECKING:
 
     from .client import Client
     from .state import ConnectionState
-    from .voice_state import VoiceConnectionState
 
 
 class ReconnectWebSocket(Exception):
@@ -399,8 +394,6 @@ class DiscordWebSocket:
         if client._enable_debug_events:
             ws.send = ws.debug_send
             ws.log_receive = ws.debug_log_receive
-
-        client._connection._update_references(ws)
 
         _log.debug('Created websocket connected to %s', gateway)
 
@@ -805,7 +798,6 @@ class DiscordVoiceWebSocket:
 
     if TYPE_CHECKING:
         thread_id: int
-        _connection: VoiceConnectionState
         gateway: str
         _max_heartbeat_timeout: float
 
@@ -850,60 +842,6 @@ class DiscordVoiceWebSocket:
 
     send_heartbeat = send_as_json
 
-    async def resume(self) -> None:
-        state = self._connection
-        payload = {
-            'op': self.RESUME,
-            'd': {
-                'token': state.token,
-                'server_id': str(state.server_id),
-                'session_id': state.session_id,
-                'seq_ack': self.seq_ack,
-            },
-        }
-        await self.send_as_json(payload)
-
-    async def identify(self) -> None:
-        state = self._connection
-        payload = {
-            'op': self.IDENTIFY,
-            'd': {
-                'server_id': str(state.server_id),
-                'user_id': str(state.user.id),
-                'session_id': state.session_id,
-                'token': state.token,
-            },
-        }
-        await self.send_as_json(payload)
-
-    @classmethod
-    async def from_connection_state(
-        cls,
-        state: VoiceConnectionState,
-        *,
-        resume: bool = False,
-        hook: Optional[Callable[..., Coroutine[Any, Any, Any]]] = None,
-        seq_ack: int = -1,
-    ) -> Self:
-        """Creates a voice websocket for the :class:`VoiceClient`."""
-        gateway = f'wss://{state.endpoint}/?v=8'
-        client = state.voice_client
-        http = client._state.http
-        socket = await http.ws_connect(gateway, compress=15)
-        ws = cls(socket, loop=client.loop, hook=hook)
-        ws.gateway = gateway
-        ws.seq_ack = seq_ack
-        ws._connection = state
-        ws._max_heartbeat_timeout = 60.0
-        ws.thread_id = threading.get_ident()
-
-        if resume:
-            await ws.resume()
-        else:
-            await ws.identify()
-
-        return ws
-
     async def select_protocol(self, ip: str, port: int, mode: str) -> None:
         payload = {
             'op': self.SELECT_PROTOCOL,
@@ -919,101 +857,6 @@ class DiscordVoiceWebSocket:
 
         await self.send_as_json(payload)
 
-    async def client_connect(self) -> None:
-        payload = {
-            'op': self.CLIENT_CONNECT,
-            'd': {
-                'audio_ssrc': self._connection.ssrc,
-            },
-        }
-
-        await self.send_as_json(payload)
-
-    async def speak(self, state: SpeakingState = SpeakingState.voice) -> None:
-        payload = {
-            'op': self.SPEAKING,
-            'd': {
-                'speaking': int(state),
-                'delay': 0,
-                'ssrc': self._connection.ssrc,
-            },
-        }
-
-        await self.send_as_json(payload)
-
-    async def received_message(self, msg: Dict[str, Any]) -> None:
-        _log.debug('Voice websocket frame received: %s', msg)
-        op = msg['op']
-        data = msg['d']  # According to Discord this key is always given
-        self.seq_ack = msg.get('seq', self.seq_ack)  # this key could not be given
-
-        if op == self.READY:
-            await self.initial_connection(data)
-        elif op == self.HEARTBEAT_ACK:
-            if self._keep_alive:
-                self._keep_alive.ack()
-        elif op == self.RESUMED:
-            _log.debug('Voice RESUME succeeded.')
-        elif op == self.SESSION_DESCRIPTION:
-            self._connection.mode = data['mode']
-            await self.load_secret_key(data)
-        elif op == self.HELLO:
-            interval = data['heartbeat_interval'] / 1000.0
-            self._keep_alive = VoiceKeepAliveHandler(ws=self, interval=min(interval, 5.0))
-            self._keep_alive.start()
-
-        await self._hook(self, msg)
-
-    async def initial_connection(self, data: Dict[str, Any]) -> None:
-        state = self._connection
-        state.ssrc = data['ssrc']
-        state.voice_port = data['port']
-        state.endpoint_ip = data['ip']
-
-        _log.debug('Connecting to voice socket')
-        await self.loop.sock_connect(state.socket, (state.endpoint_ip, state.voice_port))
-
-        state.ip, state.port = await self.discover_ip()
-        # there *should* always be at least one supported mode (xsalsa20_poly1305)
-        modes = [mode for mode in data['modes'] if mode in self._connection.supported_modes]
-        _log.debug('received supported encryption modes: %s', ', '.join(modes))
-
-        mode = modes[0]
-        await self.select_protocol(state.ip, state.port, mode)
-        _log.debug('selected the voice protocol for use (%s)', mode)
-
-    async def discover_ip(self) -> Tuple[str, int]:
-        state = self._connection
-        packet = bytearray(74)
-        struct.pack_into('>H', packet, 0, 1)  # 1 = Send
-        struct.pack_into('>H', packet, 2, 70)  # 70 = Length
-        struct.pack_into('>I', packet, 4, state.ssrc)
-
-        _log.debug('Sending ip discovery packet')
-        await self.loop.sock_sendall(state.socket, packet)
-
-        fut: asyncio.Future[bytes] = self.loop.create_future()
-
-        def get_ip_packet(data: bytes):
-            if data[1] == 0x02 and len(data) == 74:
-                self.loop.call_soon_threadsafe(fut.set_result, data)
-
-        fut.add_done_callback(lambda f: state.remove_socket_listener(get_ip_packet))
-        state.add_socket_listener(get_ip_packet)
-        recv = await fut
-
-        _log.debug('Received ip discovery packet: %s', recv)
-
-        # the ip is ascii starting at the 8th byte and ending at the first null
-        ip_start = 8
-        ip_end = recv.index(0, ip_start)
-        ip = recv[ip_start:ip_end].decode('ascii')
-
-        port = struct.unpack_from('>H', recv, len(recv) - 2)[0]
-        _log.debug('detected ip: %s port: %s', ip, port)
-
-        return ip, port
-
     @property
     def latency(self) -> float:
         """:class:`float`: Latency between a HEARTBEAT and its HEARTBEAT_ACK in seconds."""
@@ -1028,27 +871,6 @@ class DiscordVoiceWebSocket:
             return float('inf')
 
         return sum(heartbeat.recent_ack_latencies) / len(heartbeat.recent_ack_latencies)
-
-    async def load_secret_key(self, data: Dict[str, Any]) -> None:
-        _log.debug('received secret key for voice connection')
-        self.secret_key = self._connection.secret_key = data['secret_key']
-
-        # Send a speak command with the "not speaking" state.
-        # This also tells Discord our SSRC value, which Discord requires before
-        # sending any voice data (and is the real reason why we call this here).
-        await self.speak(SpeakingState.none)
-
-    async def poll_event(self) -> None:
-        # This exception is handled up the chain
-        msg = await asyncio.wait_for(self.ws.receive(), timeout=30.0)
-        if msg.type is aiohttp.WSMsgType.TEXT:
-            await self.received_message(utils._from_json(msg.data))
-        elif msg.type is aiohttp.WSMsgType.ERROR:
-            _log.debug('Received voice %s', msg)
-            raise ConnectionClosed(self.ws, shard_id=None) from msg.data
-        elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSING):
-            _log.debug('Received voice %s', msg)
-            raise ConnectionClosed(self.ws, shard_id=None, code=self._close_code)
 
     async def close(self, code: int = 1000) -> None:
         if self._keep_alive is not None:

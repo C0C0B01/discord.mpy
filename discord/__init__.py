@@ -56,9 +56,7 @@ from .enums import *
 from .embeds import *
 from .mentions import *
 from .shard import *
-from .player import *
 from .webhook import *
-from .voice_client import *
 from .audit_logs import *
 from .raw_models import *
 from .team import *
@@ -70,7 +68,6 @@ from .components import *
 from .threads import *
 from .automod import *
 from .poll import *
-from .soundboard import *
 from .subscription import *
 from .presences import *
 

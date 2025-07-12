@@ -75,7 +75,6 @@ __all__ = (
     'EntitlementType',
     'EntitlementOwnerType',
     'PollLayoutType',
-    'VoiceChannelEffectAnimationType',
     'SubscriptionStatus',
     'MessageReferenceType',
 )

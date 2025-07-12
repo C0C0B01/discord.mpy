@@ -40,8 +40,6 @@ from typing import (
     TYPE_CHECKING,
     Protocol,
     Sequence,
-    Tuple,
-    TypeVar,
     Union,
     overload,
     runtime_checkable,
@@ -50,14 +48,13 @@ from typing import (
 from .object import OLDEST_OBJECT, Object
 from .context_managers import Typing
 from .enums import ChannelType, InviteTarget
-from .errors import ClientException, NotFound
+from .errors import NotFound
 from .mentions import AllowedMentions
 from .permissions import PermissionOverwrite, Permissions
 from .role import Role
 from .invite import Invite
 from .file import File
 from .http import handle_message_parameters
-from .voice_client import VoiceClient, VoiceProtocol
 from .sticker import GuildSticker, StickerItem
 from . import utils
 from .flags import InviteFlags
@@ -68,15 +65,10 @@ __all__ = (
     'PrivateChannel',
     'GuildChannel',
     'Messageable',
-    'Connectable',
 )
-
-T = TypeVar('T', bound=VoiceProtocol)
 
 if TYPE_CHECKING:
     from typing_extensions import Self
-
-    from .client import Client
     from .user import ClientUser
     from .asset import Asset
     from .state import ConnectionState
@@ -1914,100 +1906,3 @@ class Messageable:
             if count < 100:
                 # There's no data left after this
                 break
-
-
-class Connectable(Protocol):
-    """An ABC that details the common operations on a channel that can
-    connect to a voice server.
-
-    The following implement this ABC:
-
-    - :class:`~discord.VoiceChannel`
-    - :class:`~discord.StageChannel`
-    """
-
-    __slots__ = ()
-    _state: ConnectionState
-
-    def _get_voice_client_key(self) -> Tuple[int, str]:
-        raise NotImplementedError
-
-    def _get_voice_state_pair(self) -> Tuple[int, int]:
-        raise NotImplementedError
-
-    async def connect(
-        self,
-        *,
-        timeout: float = 30.0,
-        reconnect: bool = True,
-        cls: Callable[[Client, Connectable], T] = VoiceClient,
-        self_deaf: bool = False,
-        self_mute: bool = False,
-    ) -> T:
-        """|coro|
-
-        Connects to voice and creates a :class:`~discord.VoiceClient` to establish
-        your connection to the voice server.
-
-        This requires :attr:`~discord.Intents.voice_states`.
-
-        Parameters
-        -----------
-        timeout: :class:`float`
-            The timeout in seconds to wait the connection to complete.
-        reconnect: :class:`bool`
-            Whether the bot should automatically attempt
-            a reconnect if a part of the handshake fails
-            or the gateway goes down.
-        cls: Type[:class:`~discord.VoiceProtocol`]
-            A type that subclasses :class:`~discord.VoiceProtocol` to connect with.
-            Defaults to :class:`~discord.VoiceClient`.
-        self_mute: :class:`bool`
-            Indicates if the client should be self-muted.
-
-            .. versionadded:: 2.0
-        self_deaf: :class:`bool`
-            Indicates if the client should be self-deafened.
-
-            .. versionadded:: 2.0
-
-        Raises
-        -------
-        asyncio.TimeoutError
-            Could not connect to the voice channel in time.
-        ~discord.ClientException
-            You are already connected to a voice channel.
-        ~discord.opus.OpusNotLoaded
-            The opus library has not been loaded.
-
-        Returns
-        --------
-        :class:`~discord.VoiceProtocol`
-            A voice client that is fully connected to the voice server.
-        """
-
-        key_id, _ = self._get_voice_client_key()
-        state = self._state
-
-        if state._get_voice_client(key_id):
-            raise ClientException('Already connected to a voice channel.')
-
-        client = state._get_client()
-        voice: T = cls(client, self)
-
-        if not isinstance(voice, VoiceProtocol):
-            raise TypeError('Type must meet VoiceProtocol abstract base class.')
-
-        state._add_voice_client(key_id, voice)
-
-        try:
-            await voice.connect(timeout=timeout, reconnect=reconnect, self_deaf=self_deaf, self_mute=self_mute)
-        except asyncio.TimeoutError:
-            try:
-                await voice.disconnect(force=True)
-            except Exception:
-                # we don't care if disconnect failed because connection failed
-                pass
-            raise  # re-raise
-
-        return voice

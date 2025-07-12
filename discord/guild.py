@@ -24,7 +24,6 @@ DEALINGS IN THE SOFTWARE.
 
 from __future__ import annotations
 
-import copy
 import datetime
 import unicodedata
 from typing import (
@@ -94,7 +93,6 @@ from .object import OLDEST_OBJECT, Object
 from .welcome_screen import WelcomeScreen, WelcomeChannel
 from .automod import AutoModRule, AutoModTrigger, AutoModRuleAction
 from .partial_emoji import _EmojiTag, PartialEmoji
-from .soundboard import SoundboardSound
 from .presences import RawPresenceUpdateEvent
 
 __all__ = (
@@ -118,13 +116,11 @@ if TYPE_CHECKING:
     from .types.threads import (
         Thread as ThreadPayload,
     )
-    from .types.voice import GuildVoiceState
     from .permissions import Permissions
     from .channel import VoiceChannel, StageChannel, TextChannel, ForumChannel, CategoryChannel
     from .template import Template
     from .webhook import Webhook
     from .state import ConnectionState
-    from .voice_client import VoiceProtocol
     from .types.channel import (
         GuildChannel as GuildChannelPayload,
         TextChannel as TextChannelPayload,
@@ -464,7 +460,6 @@ class Guild(Hashable):
         self._threads: Dict[int, Thread] = {}
         self._stage_instances: Dict[int, StageInstance] = {}
         self._scheduled_events: Dict[int, ScheduledEvent] = {}
-        self._soundboard_sounds: Dict[int, SoundboardSound] = {}
         self._state: ConnectionState = state
         self._member_count: Optional[int] = None
         self._from_data(data)
@@ -510,12 +505,6 @@ class Guild(Hashable):
             del self._threads[k]
         return to_remove
 
-    def _add_soundboard_sound(self, sound: SoundboardSound, /) -> None:
-        self._soundboard_sounds[sound.id] = sound
-
-    def _remove_soundboard_sound(self, sound: SoundboardSound, /) -> None:
-        self._soundboard_sounds.pop(sound.id, None)
-
     def __str__(self) -> str:
         return self.name or ''
 
@@ -529,34 +518,6 @@ class Guild(Hashable):
         )
         inner = ' '.join('%s=%r' % t for t in attrs)
         return f'<Guild {inner}>'
-
-    def _update_voice_state(self, data: GuildVoiceState, channel_id: int) -> Tuple[Optional[Member], VoiceState, VoiceState]:
-        user_id = int(data['user_id'])
-        channel: Optional[VocalGuildChannel] = self.get_channel(channel_id)  # type: ignore # this will always be a voice channel
-        try:
-            # check if we should remove the voice state from cache
-            if channel is None:
-                after = self._voice_states.pop(user_id)
-            else:
-                after = self._voice_states[user_id]
-
-            before = copy.copy(after)
-            after._update(data, channel)
-        except KeyError:
-            # if we're here then we're getting added into the cache
-            after = VoiceState(data=data, channel=channel)
-            before = VoiceState(data=data, channel=None)
-            self._voice_states[user_id] = after
-
-        member = self.get_member(user_id)
-        if member is None:
-            try:
-                member_data = data['member']  # pyright: ignore[reportTypedDictNotRequiredAccess]
-                member = Member(data=member_data, state=self._state, guild=self)
-            except KeyError:
-                member = None
-
-        return member, before, after
 
     def _add_role(self, role: Role, /) -> None:
         self._roles[role.id] = role
@@ -641,9 +602,6 @@ class Guild(Hashable):
                 if factory:
                     self._add_channel(factory(guild=self, data=c, state=self._state))  # type: ignore
 
-        for obj in guild.get('voice_states', []):
-            self._update_voice_state(obj, int(obj['channel_id']))
-
         cache_joined = self._state.member_cache_flags.joined
         cache_voice = self._state.member_cache_flags.voice
         self_id = self._state.self_id
@@ -674,11 +632,6 @@ class Guild(Hashable):
             for s in guild['guild_scheduled_events']:
                 scheduled_event = ScheduledEvent(data=s, state=self._state)
                 self._scheduled_events[scheduled_event.id] = scheduled_event
-
-        if 'soundboard_sounds' in guild:
-            for s in guild['soundboard_sounds']:
-                soundboard_sound = SoundboardSound(guild=self, data=s, state=self._state)
-                self._add_soundboard_sound(soundboard_sound)
 
     @property
     def channels(self) -> Sequence[GuildChannel]:
@@ -736,11 +689,6 @@ class Guild(Hashable):
         self_id = self._state.user.id  # type: ignore # state.user won't be None if we're logged in
         # The self member is *always* cached
         return self.get_member(self_id)  # type: ignore
-
-    @property
-    def voice_client(self) -> Optional[VoiceProtocol]:
-        """Optional[:class:`VoiceProtocol`]: Returns the :class:`VoiceProtocol` associated with this guild, if any."""
-        return self._state._get_voice_client(self.id)
 
     @property
     def text_channels(self) -> List[TextChannel]:
@@ -1128,37 +1076,6 @@ class Guild(Hashable):
             The scheduled event or ``None`` if not found.
         """
         return self._scheduled_events.get(scheduled_event_id)
-
-    @property
-    def soundboard_sounds(self) -> Sequence[SoundboardSound]:
-        """Sequence[:class:`SoundboardSound`]: Returns a sequence of the guild's soundboard sounds.
-
-        .. versionadded:: 2.5
-        """
-        return utils.SequenceProxy(self._soundboard_sounds.values())
-
-    def get_soundboard_sound(self, sound_id: int, /) -> Optional[SoundboardSound]:
-        """Returns a soundboard sound with the given ID.
-
-        .. versionadded:: 2.5
-
-        Parameters
-        -----------
-        sound_id: :class:`int`
-            The ID to search for.
-
-        Returns
-        --------
-        Optional[:class:`SoundboardSound`]
-            The soundboard sound or ``None`` if not found.
-        """
-        return self._soundboard_sounds.get(sound_id)
-
-    def _resolve_soundboard_sound(self, id: Optional[int], /) -> Optional[SoundboardSound]:
-        if id is None:
-            return
-
-        return self._soundboard_sounds.get(id)
 
     @property
     def owner(self) -> Optional[Member]:
@@ -4740,130 +4657,3 @@ class Guild(Hashable):
             return False
 
         return self.raid_detected_at > utils.utcnow()
-
-    async def fetch_soundboard_sound(self, sound_id: int, /) -> SoundboardSound:
-        """|coro|
-
-        Retrieves a :class:`SoundboardSound` with the specified ID.
-
-        .. versionadded:: 2.5
-
-        .. note::
-
-            Using this, in order to receive :attr:`SoundboardSound.user`, you must have :attr:`~Permissions.create_expressions`
-            or :attr:`~Permissions.manage_expressions`.
-
-        .. note::
-
-            This method is an API call. For general usage, consider :attr:`get_soundboard_sound` instead.
-
-        Raises
-        -------
-        NotFound
-            The sound requested could not be found.
-        HTTPException
-            Retrieving the sound failed.
-
-        Returns
-        --------
-        :class:`SoundboardSound`
-            The retrieved sound.
-        """
-        data = await self._state.http.get_soundboard_sound(self.id, sound_id)
-        return SoundboardSound(guild=self, state=self._state, data=data)
-
-    async def fetch_soundboard_sounds(self) -> List[SoundboardSound]:
-        """|coro|
-
-        Retrieves a list of all soundboard sounds for the guild.
-
-        .. versionadded:: 2.5
-
-        .. note::
-
-            Using this, in order to receive :attr:`SoundboardSound.user`, you must have :attr:`~Permissions.create_expressions`
-            or :attr:`~Permissions.manage_expressions`.
-
-        .. note::
-
-            This method is an API call. For general usage, consider :attr:`soundboard_sounds` instead.
-
-        Raises
-        -------
-        HTTPException
-            Retrieving the sounds failed.
-
-        Returns
-        --------
-        List[:class:`SoundboardSound`]
-            The retrieved soundboard sounds.
-        """
-        data = await self._state.http.get_soundboard_sounds(self.id)
-        return [SoundboardSound(guild=self, state=self._state, data=sound) for sound in data['items']]
-
-    async def create_soundboard_sound(
-        self,
-        *,
-        name: str,
-        sound: bytes,
-        volume: float = 1,
-        emoji: Optional[EmojiInputType] = None,
-        reason: Optional[str] = None,
-    ) -> SoundboardSound:
-        """|coro|
-
-        Creates a :class:`SoundboardSound` for the guild.
-        You must have :attr:`Permissions.create_expressions` to do this.
-
-        .. versionadded:: 2.5
-
-        Parameters
-        ----------
-        name: :class:`str`
-            The name of the sound. Must be between 2 and 32 characters.
-        sound: :class:`bytes`
-            The :term:`py:bytes-like object` representing the sound data.
-            Only MP3 and OGG sound files that don't exceed the duration of 5.2s are supported.
-        volume: :class:`float`
-            The volume of the sound. Must be between 0 and 1. Defaults to ``1``.
-        emoji: Optional[Union[:class:`Emoji`, :class:`PartialEmoji`, :class:`str`]]
-            The emoji of the sound.
-        reason: Optional[:class:`str`]
-            The reason for creating the sound. Shows up on the audit log.
-
-        Raises
-        -------
-        Forbidden
-            You do not have permissions to create a soundboard sound.
-        HTTPException
-            Creating the soundboard sound failed.
-
-        Returns
-        -------
-        :class:`SoundboardSound`
-            The newly created soundboard sound.
-        """
-        payload: Dict[str, Any] = {
-            'name': name,
-            'sound': utils._bytes_to_base64_data(sound, audio=True),
-            'volume': volume,
-            'emoji_id': None,
-            'emoji_name': None,
-        }
-
-        if emoji is not None:
-            if isinstance(emoji, _EmojiTag):
-                partial_emoji = emoji._to_partial()
-            elif isinstance(emoji, str):
-                partial_emoji = PartialEmoji.from_str(emoji)
-            else:
-                partial_emoji = None
-
-            if partial_emoji is not None:
-                if partial_emoji.id is None:
-                    payload['emoji_name'] = partial_emoji.name
-                else:
-                    payload['emoji_id'] = partial_emoji.id
-
-        data = await self._state.http.create_soundboard_sound(self.id, reason=reason, **payload)
-        return SoundboardSound(guild=self, state=self._state, data=data)
