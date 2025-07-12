@@ -23,7 +23,7 @@ Voice is not supported due to it probably making your Rpi explode O_O
 .. code:: sh
 
     # MicroPython
-    mip.install("C0C0B01/discord.mpy")
+    mip.install("github:C0C0B01/discord.mpy/tree/master/dist")
 
 
 Quick Example
