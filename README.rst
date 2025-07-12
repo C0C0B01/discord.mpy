@@ -1,17 +1,11 @@
-discord.py
+discord.mpy
 ==========
 
 .. image:: https://discord.com/api/guilds/336642139381301249/embed.png
-   :target: https://discord.gg/r3sSKJJ
+   :target: https://discord.gg/6cN7wKa8gp
    :alt: Discord server invite
-.. image:: https://img.shields.io/pypi/v/discord.py.svg
-   :target: https://pypi.python.org/pypi/discord.py
-   :alt: PyPI version info
-.. image:: https://img.shields.io/pypi/pyversions/discord.py.svg
-   :target: https://pypi.python.org/pypi/discord.py
-   :alt: PyPI supported Python versions
 
-A modern, easy to use, feature-rich, and async ready API wrapper for Discord written in Python.
+A modern, easy to use, feature-rich, and async ready API wrapper for Discord written in MicroPython.
 
 Key Features
 -------------
@@ -19,64 +13,26 @@ Key Features
 - Modern Pythonic API using ``async`` and ``await``.
 - Proper rate limit handling.
 - Optimised in both speed and memory.
+- Support for Rpi Pico 2W (Rpi Pico W support planned)
 
 Installing
 ----------
 
-**Python 3.8 or higher is required**
-
-To install the library without full voice support, you can just run the following command:
-
-.. note::
-
-    A `Virtual Environment <https://docs.python.org/3/library/venv.html>`__ is recommended to install
-    the library, especially on Linux where the system Python is externally managed and restricts which
-    packages you can install on it.
-
+Voice is not supported due to it probably making your Rpi explode O_O
 
 .. code:: sh
 
-    # Linux/macOS
-    python3 -m pip install -U discord.py
+    # MicroPython
+    mip.install("C0C0B01/discord.mpy")
 
-    # Windows
-    py -3 -m pip install -U discord.py
-
-Otherwise to get voice support you should run the following command:
-
-.. code:: sh
-
-    # Linux/macOS
-    python3 -m pip install -U "discord.py[voice]"
-
-    # Windows
-    py -3 -m pip install -U discord.py[voice]
-
-
-To install the development version, do the following:
-
-.. code:: sh
-
-    $ git clone https://github.com/Rapptz/discord.py
-    $ cd discord.py
-    $ python3 -m pip install -U .[voice]
-
-
-Optional Packages
-~~~~~~~~~~~~~~~~~~
-
-* `PyNaCl <https://pypi.org/project/PyNaCl/>`__ (for voice support)
-
-Please note that when installing voice support on Linux, you must install the following packages via your favourite package manager (e.g. ``apt``, ``dnf``, etc) before running the above commands:
-
-* libffi-dev (or ``libffi-devel`` on some systems)
-* python-dev (e.g. ``python3.8-dev`` for Python 3.8)
 
 Quick Example
 --------------
 
 .. code:: py
 
+    import mip
+    mip.install("C0C0B01/discord.mpy")
     import discord
 
     class MyClient(discord.Client):
@@ -101,6 +57,8 @@ Bot Example
 
 .. code:: py
 
+    import mip
+    mip.install("C0C0B01/discord.mpy")
     import discord
     from discord.ext import commands
 
@@ -115,10 +73,3 @@ Bot Example
     bot.run('token')
 
 You can find more examples in the examples directory.
-
-Links
-------
-
-- `Documentation <https://discordpy.readthedocs.io/en/latest/index.html>`_
-- `Official Discord Server <https://discord.gg/r3sSKJJ>`_
-- `Discord API <https://discord.gg/discord-api>`_

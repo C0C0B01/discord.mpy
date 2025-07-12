@@ -1,4 +1,6 @@
-## Contributing to discord.py
+## Contributing to discord.mpy
+
+This is literally only used for making a single bot, but it might aswell be avaidable to everyone!
 
 First off, thanks for taking the time to contribute. It makes the library substantially better. :+1:
 
@@ -8,10 +10,7 @@ The following is a set of guidelines for contributing to the repository. These a
 
 Generally speaking questions are better suited in our resources below.
 
-- The official support server: https://discord.gg/r3sSKJJ
 - The Discord API server under #python_discord-py: https://discord.gg/discord-api
-- [The FAQ in the documentation](https://discordpy.readthedocs.io/en/latest/faq.html)
-- [StackOverflow's `discord.py` tag](https://stackoverflow.com/questions/tagged/discord.py)
 
 Please try your best not to ask questions in our issue tracker. Most of them don't belong there unless they provide value to a larger audience.
 
